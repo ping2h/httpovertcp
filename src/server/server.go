@@ -21,7 +21,7 @@ type Server struct {
 
 type Mux struct {
 	rwLock sync.RWMutex
-	uri    map[string]bool
+	uri    map[string]*sync.RWMutex
 }
 
 var allowedContentTypes = map[string]string{
@@ -36,7 +36,7 @@ var allowedContentTypes = map[string]string{
 func NewMux() *Mux {
 	return &Mux{
 		rwLock: sync.RWMutex{},
-		uri:    map[string]bool{},
+		uri:    map[string]*sync.RWMutex{},
 	}
 }
 func NewServer(host, port string, maxConn int) *Server {
@@ -51,7 +51,7 @@ func NewServer(host, port string, maxConn int) *Server {
 func (m *Mux) UpdateMux(uri string) {
 	m.rwLock.Lock()
 	defer m.rwLock.Unlock()
-	m.uri[uri] = true
+	m.uri[uri] = &sync.RWMutex{}
 }
 
 func (m *Mux) ReadMux(uri string) bool {
@@ -127,46 +127,63 @@ func (s *Server) mux(conn net.Conn, header []string, reader *bufio.Reader) {
 	if m != "GET" && m != "POST" {
 		error501(conn)
 	}
-	// 404
-	if !s.Mux.ReadMux(methodAndURI(m, u)) {
-		error404(conn)
-	}
 
-	if m == "GET" && u == "/" {
-		index(conn)
+	if m == "GET" {
+
+		s.GetPage(conn, u)
 	}
 	if m == "POST" && u == "/upload" {
-		upload(conn, header, reader)
+		s.upload(conn, header, reader)
 	}
-	// if m == "GET" && u == "/contact" {
-	// 	contact(conn)
-	// }
-	// if m == "GET" && u == "/apply" {
-	// 	apply(conn)
-	// }
-	// if m == "POST" && u == "/apply" {
-	// 	applyProcess(conn)
-	// }
+
 }
 
-func index(conn net.Conn) {
+func (s *Server) GetPage(conn net.Conn, uri string) {
+	if uri == "/" {
+		file, err := os.Open("src/server/index.html")
+		if err != nil {
+			log.Println(err)
+			return
+		}
+		defer file.Close()
 
-	file, err := os.Open("src/server/index.html")
-	if err != nil {
-		log.Println(err)
-		return
+		fileInfo, _ := file.Stat()
+		fmt.Fprint(conn, "HTTP/1.1 200 OK\r\n")
+		fmt.Fprintf(conn, "Content-Length: %d\r\n", int(fileInfo.Size()))
+		fmt.Fprint(conn, "Content-Type: text/html\r\n")
+		fmt.Fprint(conn, "\r\n")
+		io.Copy(conn, file)
+	} else {
+		uri = strings.Replace(uri, "/", "", -1)
+		if s.Mux.ReadMux(uri) {
+			// lock
+			fmt.Print("*********************")
+			s.Mux.uri[uri].RLock()
+			defer s.Mux.uri[uri].RUnlock()
+			file, err := os.Open("src/server/upload/" + uri)
+			if err != nil {
+				log.Println(err)
+				return
+			}
+			defer file.Close()
+			contentType := getContentType(uri)
+			fileInfo, _ := file.Stat()
+			fmt.Fprint(conn, "HTTP/1.1 200 OK\r\n")
+			fmt.Fprintf(conn, "Content-Length: %d\r\n", int(fileInfo.Size()))
+			fmt.Fprint(conn, "Content-Type: "+contentType+"\r\n")
+			fmt.Fprint(conn, "\r\n")
+			io.Copy(conn, file)
+
+		} else {
+			fmt.Print("************555555555555****")
+			fmt.Println(s.Mux.uri)
+			error404(conn)
+		}
 	}
-	defer file.Close()
-
-	fileInfo, _ := file.Stat()
-	fmt.Fprint(conn, "HTTP/1.1 200 OK\r\n")
-	fmt.Fprintf(conn, "Content-Length: %d\r\n", int(fileInfo.Size()))
-	fmt.Fprint(conn, "Content-Type: text/html\r\n")
-	fmt.Fprint(conn, "\r\n")
-	io.Copy(conn, file)
 }
 
-func upload(conn net.Conn, header []string, reader *bufio.Reader) {
+// race here
+func (s *Server) upload(conn net.Conn, header []string, reader *bufio.Reader) {
 	var contentType, contentLength, conTentDis string
 	for _, line := range header {
 		key := strings.Fields(line)[0]
@@ -187,6 +204,11 @@ func upload(conn net.Conn, header []string, reader *bufio.Reader) {
 		return
 	}
 	fileName := getFileName(conTentDis)
+	s.Mux.UpdateMux(fileName)
+	// lock
+	s.Mux.uri[fileName].Lock()
+	defer s.Mux.uri[fileName].Unlock()
+
 	file, err := os.Create("/home/dellzp/tmp/dslab1/src/server/upload/" + fileName)
 	if err != nil {
 		fmt.Println("Error creating file:", err)
@@ -210,4 +232,16 @@ func methodAndURI(method, uri string) string {
 func getFileName(str string) string {
 	parts := strings.Split(str, "=")
 	return parts[1]
+}
+
+func getContentType(uri string) string {
+	parts := strings.Split(uri, ".")
+	suffix := parts[1]
+	for k, v := range allowedContentTypes {
+		if v == suffix {
+			return k
+		}
+	}
+
+	return ""
 }
