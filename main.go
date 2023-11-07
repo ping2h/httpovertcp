@@ -17,7 +17,7 @@ func main() {
 	case "server":
 		serv.Run()
 	case "client":
-		client.Client()
+		client.ClientPost()
 	default:
 		fmt.Println("Usage: myprogram -mode=server|client")
 		return

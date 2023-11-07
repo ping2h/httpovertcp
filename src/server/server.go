@@ -7,7 +7,9 @@ import (
 	"log"
 	"net"
 	"os"
-	"path/filepath"
+	"strconv"
+
+	// "path/filepath"
 	"strings"
 	"sync"
 )
@@ -22,6 +24,15 @@ type Server struct {
 type Mux struct {
 	rwLock sync.RWMutex
 	uri    map[string]bool
+}
+
+var allowedContentTypes = map[string]string{
+	"text/html":  "html",
+	"text/plain": "txt",
+	"image/gif":  "gif",
+	"image/jpeg": "jpg",
+	"image/png":  "png",
+	"text/css":   "css",
 }
 
 func NewMux() *Mux {
@@ -93,7 +104,7 @@ func (s *Server) handleConnection(conn net.Conn, maxConnChan chan struct{}) {
 			if line == "\r\n" {
 				break
 			}
-			log.Print(line)
+			fmt.Print(line)
 			header = append(header, line)
 			line, err = reader.ReadString('\n')
 		}
@@ -102,7 +113,7 @@ func (s *Server) handleConnection(conn net.Conn, maxConnChan chan struct{}) {
 			return
 		} else {
 
-			s.mux(conn, header)
+			s.mux(conn, header, reader)
 
 		}
 
@@ -110,7 +121,7 @@ func (s *Server) handleConnection(conn net.Conn, maxConnChan chan struct{}) {
 	}
 }
 
-func (s *Server) mux(conn net.Conn, header []string) {
+func (s *Server) mux(conn net.Conn, header []string, reader *bufio.Reader) {
 	// request line
 	m := strings.Fields(header[0])[0] // method
 	u := strings.Fields(header[0])[1] // uri
@@ -127,7 +138,7 @@ func (s *Server) mux(conn net.Conn, header []string) {
 		index(conn)
 	}
 	if m == "POST" && u == "/upload" {
-		upload(conn)
+		upload(conn, header, reader)
 	}
 	// if m == "GET" && u == "/contact" {
 	// 	contact(conn)
@@ -138,37 +149,6 @@ func (s *Server) mux(conn net.Conn, header []string) {
 	// if m == "POST" && u == "/apply" {
 	// 	applyProcess(conn)
 	// }
-}
-
-func error501(conn net.Conn) {
-	log.Println("received a not implemented request")
-	file, err := os.Open("src/server/501.html")
-	if err != nil {
-		log.Println(err)
-		return
-	}
-	defer file.Close()
-	fileInfo, _ := file.Stat()
-	fmt.Fprint(conn, "HTTP/1.1 501 Not Implemented\r\n")
-	fmt.Fprintf(conn, "Content-Length: %d\r\n", int(fileInfo.Size()))
-	fmt.Fprint(conn, "Content-Type: text/html\r\n")
-	fmt.Fprint(conn, "\r\n")
-	io.Copy(conn, file)
-}
-func error404(conn net.Conn) {
-	log.Println("received request that aquires non exist resource")
-	file, err := os.Open("src/server/404.html")
-	if err != nil {
-		log.Println(err)
-		return
-	}
-	defer file.Close()
-	fileInfo, _ := file.Stat()
-	fmt.Fprint(conn, "HTTP/1.1 404 Not Found\r\n")
-	fmt.Fprintf(conn, "Content-Length: %d\r\n", int(fileInfo.Size()))
-	fmt.Fprint(conn, "Content-Type: text/html\r\n")
-	fmt.Fprint(conn, "\r\n")
-	io.Copy(conn, file)
 }
 
 func index(conn net.Conn) {
@@ -188,63 +168,43 @@ func index(conn net.Conn) {
 	io.Copy(conn, file)
 }
 
-func upload(conn net.Conn) {
-	// Convert the net.Conn to a bufio.Reader
-	reader := bufio.NewReader(conn)
-
-	allowedContentTypes := map[string]string{
-		"text/html":  "html",
-		"text/plain": "txt",
-		"image/gif":  "gif",
-		"image/jpeg": "jpg",
-		"image/png":  "png",
-		"text/css":   "css",
+func upload(conn net.Conn, header []string, reader *bufio.Reader) {
+	var contentType, contentLength, conTentDis string
+	for _, line := range header {
+		key := strings.Fields(line)[0]
+		if key == "Content-Length:" {
+			contentLength = strings.Fields(line)[1]
+		} else if key == "Content-Type:" {
+			contentType = strings.Fields(line)[1]
+		} else if key == "Content-Disposition:" {
+			conTentDis = strings.Fields(line)[2]
+		}
 	}
 
-	// Process each part in the multipart request
-	for {
-		part, err := mpReader.NextPart()
-		if err == io.EOF {
-			break
-		}
-		if err != nil {
-			fmt.Println("Error reading part:", err)
-			return
-		}
+	fmt.Println(conTentDis, contentLength, contentType)
+	// reader := bufio.NewReader(conn)
 
-		// Check if the content type is allowed
-		_, ok := allowedContentTypes[part.Header.Get("Content-Type")]
-		if !ok {
-			fmt.Fprint(conn, "HTTP/1.1 400 Bad Request\r\n")
-			fmt.Fprint(conn, "\r\n")
-			fmt.Fprint(conn, "Invalid file type")
-			return
-		}
-
-		// Create a file in the "upload" directory with a unique name
-		outFile, err := os.Create(filepath.Join("src/server/upload", part.FileName()))
-		if err != nil {
-			fmt.Fprint(conn, "HTTP/1.1 500 Internal Server Error\r\n")
-			fmt.Fprint(conn, "\r\n")
-			fmt.Fprint(conn, "Failed to create the file")
-			return
-		}
-		defer outFile.Close()
-
-		// Copy the part's content to the newly created file
-		_, err = io.Copy(outFile, part)
-		if err != nil {
-			fmt.Fprint(conn, "HTTP/1.1 500 Internal Server Error\r\n")
-			fmt.Fprint(conn, "\r\n")
-			fmt.Fprint(conn, "Failed to save the file")
-			return
-		}
-
-		fmt.Fprint(conn, "HTTP/1.1 200 OK\r\n")
-		fmt.Fprint(conn, "\r\n")
-		fmt.Fprintf(conn, "File uploaded: %s\n", part.FileName())
+	if _, ok := allowedContentTypes[contentType]; !ok {
+		log.Println("The file format is not supported")
+		error400(conn)
+		return
+	}
+	file, err := os.Create("/home/dellzp/tmp/dslab1/src/server/upload/output.txt")
+	if err != nil {
+		fmt.Println("Error creating file:", err)
+		return
+	}
+	defer file.Close()
+	intlength := 0
+	intlength, _ = strconv.Atoi(contentLength)
+	buffer := make([]byte, intlength)
+	// fmt.Println(reader.Buffered())
+	reader.Read(buffer)
+	if _, err := file.Write(buffer); err != nil {
+		log.Fatal(err)
 	}
 }
+
 func methodAndURI(method, uri string) string {
 	return method + " " + uri
 }
