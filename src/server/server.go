@@ -3,6 +3,7 @@ package server
 import (
 	"bufio"
 	"fmt"
+	"html/template"
 	"io"
 	"log"
 	"net"
@@ -69,8 +70,8 @@ func (s *Server) Run() {
 		log.Fatalf("Listen:%v", err)
 	}
 	// registeration of new resources
-	s.Mux.UpdateMux(methodAndURI("GET", "/"))
-	s.Mux.UpdateMux(methodAndURI("POST", "/upload"))
+	s.Mux.UpdateMux("/")
+	s.Mux.UpdateMux("/upload")
 
 	log.Println("server listen at port:", s.port)
 	for {
@@ -153,11 +154,27 @@ func (s *Server) GetPage(conn net.Conn, uri string) {
 		fmt.Fprint(conn, "Content-Type: text/html\r\n")
 		fmt.Fprint(conn, "\r\n")
 		io.Copy(conn, file)
+	} else if uri == "/files" {
+		if err := s.RefreshFilePage(); err != nil {
+			log.Fatal(err)
+		}
+		file, err := os.Open("src/server/files.html")
+		if err != nil {
+			log.Println(err)
+			return
+		}
+		defer file.Close()
+
+		fileInfo, _ := file.Stat()
+		fmt.Fprint(conn, "HTTP/1.1 200 OK\r\n")
+		fmt.Fprintf(conn, "Content-Length: %d\r\n", int(fileInfo.Size()))
+		fmt.Fprint(conn, "Content-Type: text/html\r\n")
+		fmt.Fprint(conn, "\r\n")
+		io.Copy(conn, file)
 	} else {
 		uri = strings.Replace(uri, "/", "", -1)
 		if s.Mux.ReadMux(uri) {
 			// lock
-			fmt.Print("*********************")
 			s.Mux.uri[uri].RLock()
 			defer s.Mux.uri[uri].RUnlock()
 			file, err := os.Open("src/server/upload/" + uri)
@@ -175,7 +192,6 @@ func (s *Server) GetPage(conn net.Conn, uri string) {
 			io.Copy(conn, file)
 
 		} else {
-			fmt.Print("************555555555555****")
 			fmt.Println(s.Mux.uri)
 			error404(conn)
 		}
@@ -225,6 +241,55 @@ func (s *Server) upload(conn net.Conn, header []string, reader *bufio.Reader) {
 	}
 }
 
+func (s *Server) RefreshFilePage() error {
+	tmpl := `
+	<!DOCTYPE html>
+	<html>
+	<head>
+		<title>List Page</title>
+	</head>
+	<body>
+		<h1>List of Items:</h1>
+		<ul>
+			{{range .}}
+			<li><<a href="http://localhost:8080/{{.}}">{{.}}</a></li>
+			{{end}}
+		</ul>
+	</body>
+	</html>`
+
+	// Create or open the output HTML file
+	file, err := os.Create("/home/dellzp/tmp/dslab1/src/server/files.html")
+	if err != nil {
+		return err
+	}
+	defer file.Close()
+
+	// Parse the HTML template
+	t, err := template.New("list").Parse(tmpl)
+	if err != nil {
+		return err
+	}
+
+	// Execute the template with the list data and write to the file
+	list := []string{}
+	// lock
+	s.Mux.rwLock.RLock()
+	defer s.Mux.rwLock.RUnlock()
+	for k, _ := range s.Mux.uri {
+		if k != "/" && k != "/upload" {
+			k = strings.Replace(k, "/", "", -1)
+			list = append(list, k)
+		}
+	}
+
+	err = t.Execute(file, list)
+	if err != nil {
+		return err
+	}
+
+	return nil
+}
 func methodAndURI(method, uri string) string {
 	return method + " " + uri
 }
