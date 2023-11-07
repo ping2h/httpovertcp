@@ -8,8 +8,6 @@ import (
 	"net"
 	"os"
 	"strconv"
-
-	// "path/filepath"
 	"strings"
 	"sync"
 )
@@ -93,7 +91,7 @@ func (s *Server) handleConnection(conn net.Conn, maxConnChan chan struct{}) {
 	}(maxConnChan)
 	defer conn.Close()
 	log.Println("New tcp connection.")
-	reader := bufio.NewReader(conn)
+	reader := bufio.NewReaderSize(conn, 10<<20)
 	for {
 		// keep connection alive
 		header := []string{}
@@ -181,15 +179,15 @@ func upload(conn net.Conn, header []string, reader *bufio.Reader) {
 		}
 	}
 
-	fmt.Println(conTentDis, contentLength, contentType)
-	// reader := bufio.NewReader(conn)
+	// fmt.Println(conTentDis, contentLength, contentType)
 
 	if _, ok := allowedContentTypes[contentType]; !ok {
 		log.Println("The file format is not supported")
 		error400(conn)
 		return
 	}
-	file, err := os.Create("/home/dellzp/tmp/dslab1/src/server/upload/output.txt")
+	fileName := getFileName(conTentDis)
+	file, err := os.Create("/home/dellzp/tmp/dslab1/src/server/upload/" + fileName)
 	if err != nil {
 		fmt.Println("Error creating file:", err)
 		return
@@ -207,4 +205,9 @@ func upload(conn net.Conn, header []string, reader *bufio.Reader) {
 
 func methodAndURI(method, uri string) string {
 	return method + " " + uri
+}
+
+func getFileName(str string) string {
+	parts := strings.Split(str, "=")
+	return parts[1]
 }

@@ -45,7 +45,7 @@ func Client() {
 
 func ClientPost() {
 	// Open the file you want to upload
-	file, err := os.Open("/home/dellzp/tmp/dslab1/src/client/example.html")
+	file, err := os.Open("/home/dellzp/tmp/dslab1/src/client/1.jpg")
 	if err != nil {
 		panic(err)
 	}
@@ -64,8 +64,8 @@ func ClientPost() {
 	if err != nil {
 		panic(err)
 	}
-	req.Header.Set("Content-Type", "text/plain")
-	req.Header.Set("Content-Disposition", "inline; filename="+"example.html")
+	req.Header.Set("Content-Type", "image/jpeg")
+	req.Header.Set("Content-Disposition", "inline; filename="+"1.jpg")
 	client := &http.Client{}
 	resp, err := client.Do(req)
 	if err != nil {
